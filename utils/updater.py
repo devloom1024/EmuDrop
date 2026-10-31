@@ -253,6 +253,22 @@ exec sh "$APP_DIR/launch.sh"
 """
 
 
+def _normalize_stage(staging):
+    """Flatten an archive that wraps everything in a single top-level folder."""
+    entries = os.listdir(staging)
+    if len(entries) != 1:
+        return
+    inner = os.path.join(staging, entries[0])
+    if not os.path.isdir(inner):
+        return
+    markers = ("EmuDrop", "launch.sh", "assets")
+    if not any(os.path.exists(os.path.join(inner, marker)) for marker in markers):
+        return
+    for name in os.listdir(inner):
+        shutil.move(os.path.join(inner, name), os.path.join(staging, name))
+    os.rmdir(inner)
+
+
 def prepare_app_update(info, progress_cb=None):
     """Download and stage an app update.
 
@@ -265,6 +281,7 @@ def prepare_app_update(info, progress_cb=None):
     archive = os.path.join(_APP_DIR, ".update_staging.tar.gz")
     download(info["url"], archive, progress_cb=progress_cb)
     _safe_extract(archive, staging)
+    _normalize_stage(staging)
     os.remove(archive)
 
     script = os.path.join("/tmp", "emudrop_apply_update.sh")
