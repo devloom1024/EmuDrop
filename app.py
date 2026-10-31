@@ -12,6 +12,7 @@ import shutil
 import math
 import time
 import threading
+import queue
 import textwrap
 from dataclasses import dataclass
 from contextlib import contextmanager
@@ -136,6 +137,10 @@ class GameDownloaderApp:
             self.update_check_started: bool = False
             self.update_busy: bool = False
             self.update_progress: Dict[str, Any] = {"fraction": 0.0, "text": ""}
+
+            # QA hook: drive the UI over SSH through a FIFO (debug builds only)
+            self._debug_commands: "queue.Queue" = queue.Queue()
+            self._start_debug_control()
             self.pending_updates: Dict[str, Optional[Dict[str, Any]]] = {"app": None, "db": None}
             self.shutdown_for_update: bool = False
 
@@ -362,6 +367,11 @@ class GameDownloaderApp:
                     delta_time = current_time - last_time
                     last_time = current_time
                     
+                    # QA hook: commands injected through EMUDROP_DEBUG_CTL
+                    running = self._drain_debug_commands()
+                    if not running:
+                        break
+
                     # Process events
                     running = self._process_events()
                     
@@ -1737,6 +1747,56 @@ class GameDownloaderApp:
             self.view_state.update_info = info
             self._show_confirmation(f"{kind}_update", selected=True)
             return
+
+    # ------------------------------------------------------------------
+    # QA hook: remote control through a FIFO (EMUDROP_DEBUG_CTL)
+    # ------------------------------------------------------------------
+
+    DEBUG_KEYMAP = {
+        "UP": "SDLK_UP", "DOWN": "SDLK_DOWN", "LEFT": "SDLK_LEFT", "RIGHT": "SDLK_RIGHT",
+        "RETURN": "SDLK_RETURN", "BACKSPACE": "SDLK_BACKSPACE", "SPACE": "SDLK_SPACE",
+        "PAGEUP": "SDLK_PAGEUP", "PAGEDOWN": "SDLK_PAGEDOWN",
+    }
+
+    def _start_debug_control(self) -> None:
+        path = os.environ.get("EMUDROP_DEBUG_CTL")
+        if not path:
+            return
+
+        def reader():
+            logger.info(f"Debug control listening on {path}")
+            while True:
+                try:
+                    with open(path, "r") as handle:
+                        for line in handle:
+                            command = line.strip()
+                            if command:
+                                self._debug_commands.put(command)
+                except Exception as exc:  # fifo missing / closed
+                    logger.warning(f"Debug control error: {exc}")
+                    time.sleep(1.0)
+
+        threading.Thread(target=reader, daemon=True).start()
+
+    def _drain_debug_commands(self) -> bool:
+        while True:
+            try:
+                command = self._debug_commands.get_nowait()
+            except queue.Empty:
+                return True
+            if command == "QUIT":
+                return False
+            if command.startswith("SHOT:"):
+                self._debug_shot_request = command.split(":", 1)[1]
+                continue
+            name = self.DEBUG_KEYMAP.get(command.upper())
+            if not name:
+                logger.warning(f"Debug control: unknown command {command!r}")
+                continue
+            logger.info(f"Debug control: injecting {command}")
+            if not self._handle_input_event(getattr(sdl2, name)):
+                return False
+        return True
 
     def _report_update_result(self) -> None:
         """Tell the user whether the update they started actually landed."""
