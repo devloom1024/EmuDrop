@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags, needed to build the changelog
 
       - name: Show build version
         run: |
@@ -54,12 +56,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # --generate-notes produces the changelog that the in-app updater
-          # shows to the user before they accept an update.
+          # The in-app updater shows these notes, so build a real changelog from
+          # the commits since the previous tag.
+          PREV=$(git tag --sort=-creatordate | grep -v "^${GITHUB_REF_NAME}$" | head -n1 || true)
+          if [ -n "$PREV" ]; then
+            git log --pretty=format:'- %s' "${PREV}..${GITHUB_REF_NAME}" > notes.txt
+          else
+            git log --pretty=format:'- %s' "${GITHUB_REF_NAME}" > notes.txt
+          fi
+          echo "Changes since ${PREV:-the beginning}:" | cat - notes.txt > changelog.txt
+          echo
+          head -20 changelog.txt
           gh release create "${GITHUB_REF_NAME}" "dist/${ASSET}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "EmuDrop ${GITHUB_REF_NAME}" \
-            --generate-notes
+            --notes-file changelog.txt
 
       - uses: actions/upload-artifact@v4
         with:

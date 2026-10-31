@@ -1360,7 +1360,12 @@ class GameDownloaderApp:
                     (f"Installed: {info.get('current', '?')}    Size: {size}", Theme.TEXT_SECONDARY),
                     ("What's new:", Theme.TEXT_ACCENT),
                 ]
-                notes = [line.strip() for line in (info.get('notes') or '').splitlines() if line.strip()]
+                notes = []
+                for raw_line in (info.get('notes') or '').splitlines():
+                    line = raw_line.strip()
+                    if not line or line.startswith('**Full Changelog**') or line.startswith('Full Changelog'):
+                        continue
+                    notes.append(line)
                 if notes:
                     lines.extend((line[:64], Theme.TEXT_SECONDARY) for line in notes[:5])
                 else:
