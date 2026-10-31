@@ -261,6 +261,10 @@ for item in "$STAGE"/*; do
     esac
     if [ "$name" = "assets" ]; then
         cp -rf "$STAGE/assets/." "$APP_DIR/assets/" || ok=0
+    elif [ "$name" = "_internal" ]; then
+        # onedir runtime: replace it entirely so stale modules cannot linger
+        rm -rf "$APP_DIR/_internal"
+        cp -rf "$STAGE/_internal" "$APP_DIR/_internal" || ok=0
     else
         cp -rf "$item" "$APP_DIR/" || ok=0
     fi

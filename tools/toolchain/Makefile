@@ -58,11 +58,11 @@ release: .check .build
 		$(TOOLCHAIN_NAME) \
 		sh -c "cd /root/workspace && \
 			rm -rf dist/* && \
-			python3 -m PyInstaller --onefile --noconsole --name EmuDrop main.py && \
+			python3 -m PyInstaller --onedir --noconsole --name EmuDrop main.py && \
 			mkdir -p dist/.release && \
 			cp -r 'os/$(TARGET_OS)/'* dist/.release/ && \
 			mkdir -p dist/.release/EmuDrop/assets && \
-			mv dist/EmuDrop dist/.release/EmuDrop/EmuDrop && \
+			cp -r dist/EmuDrop/. dist/.release/EmuDrop/ && \
 			cp -r assets/* dist/.release/EmuDrop/assets/ && \
 			cp 'device/$(DEVICE)/'* dist/.release/EmuDrop/assets/ && \
 			printf '%s\\n%s\\n' '$(VERSION)' '$(DB_VERSION)' > dist/.release/EmuDrop/version.txt && \
