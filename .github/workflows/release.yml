@@ -42,6 +42,8 @@ jobs:
 
       - name: Package
         run: |
+          # The toolchain container runs as root, so dist/ is not writable here
+          sudo chown -R "$(id -u):$(id -g)" dist
           ASSET="EmuDrop-${GITHUB_REF_NAME:-dev}.tar.gz"
           tar -C dist -czf "dist/$ASSET" EmuDrop
           echo "ASSET=$ASSET" >> "$GITHUB_ENV"
