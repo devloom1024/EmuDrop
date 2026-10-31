@@ -23,7 +23,7 @@ class KeyboardView(BaseView):
         ]
         self.cursor_blink_rate = 530  # Blink rate in milliseconds
         
-    def render(self, selected_key: int, search_text: str) -> None:
+    def render(self, selected_key: int, search_text: str, prompt: str = "Type to search games...") -> None:
         """Render the on-screen keyboard and search box"""
         try:
             # Semi-transparent overlay
@@ -125,7 +125,7 @@ class KeyboardView(BaseView):
                     )
             else:
                 self.render_text(
-                    "Type to search games...",
+                    prompt,
                     text_x,
                     text_y,
                     color=(120, 120, 120),

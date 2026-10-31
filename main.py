@@ -7,6 +7,8 @@ exceptions that might occur during execution.
 from typing import NoReturn
 from app import GameDownloaderApp
 from utils.logger import logger
+from utils import net
+import os
 import sys
 
 def main() -> NoReturn:
@@ -22,7 +24,15 @@ def main() -> NoReturn:
             from dotenv import load_dotenv
             load_dotenv()
             logger.info("Environment variables have been loaded successfully from .env file")
-            
+
+        # Load proxy settings (assets/proxy.conf) before any network activity
+        net.configure()
+
+        # QA hook: verify the configured path without touching the UI
+        if os.environ.get("EMUDROP_DEBUG_TEST") == "1":
+            ok, message = net.test_connection()
+            logger.info(f"Proxy self-test: {'OK' if ok else 'FAILED'} - {message}")
+
         app = GameDownloaderApp()
         app.run()
     except KeyboardInterrupt:

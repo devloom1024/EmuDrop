@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Optional
 from utils.config import Config
+from utils.net import get_session
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ class ImageCache:
         for attempt in range(Config.IMAGE_DOWNLOAD_MAX_RETRIES):
             try:
                 # Download the image with extended timeout and stream mode
-                response = requests.get(
+                response = get_session().get(
                     image_url, 
                     headers=headers,
                     timeout=Config.IMAGE_DOWNLOAD_TIMEOUT,  # (connect timeout, read timeout)

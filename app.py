@@ -23,6 +23,7 @@ import sdl2.sdlimage
 # Local imports
 from utils.config import Config
 from utils.logger import logger
+from utils import net
 from utils.texture_manager import TextureManager
 from utils.download_manager import DownloadManager
 from utils.theme import Theme
@@ -35,6 +36,7 @@ from ui.games_view import GamesView
 from ui.keyboard_view import KeyboardView
 from ui.alert_dialog import AlertDialog
 from ui.sources_view import SourcesView
+from ui.network_view import NetworkView
 from data.database import Database
 
 class SDLError(Exception):
@@ -50,6 +52,7 @@ class ViewState:
     showing_keyboard: bool = False
     confirmation_selected: bool = False
     confirmation_type: Optional[str] = None
+    network_edit_field: Optional[str] = None
 
 @dataclass
 class NavigationState:
@@ -61,6 +64,7 @@ class NavigationState:
     keyboard_selected_key: int = 0
     source_page: int = 0
     selected_source: int = 0
+    selected_network: int = 0
 
 class GameDownloaderApp:
     """
@@ -124,6 +128,11 @@ class GameDownloaderApp:
             self.cached_platforms = None
             self.cached_games = {}  # Dictionary to cache games by platform_id and source_id
             self.cached_sources = {}
+
+            # Network / proxy settings screen state
+            self.network_conf: Dict[str, str] = {}
+            self.network_edit_buffer: str = ""
+            self.network_status: str = ""
             
             # Initialize alert manager
             self.alert_manager = AlertManager.get_instance()
@@ -265,6 +274,9 @@ class GameDownloaderApp:
         self.sources_view = SourcesView(self.renderer, shared_font)
         self.sources_view.set_texture_manager(self.texture_manager)
         
+        self.network_view = NetworkView(self.renderer, shared_font)
+        self.network_view.set_texture_manager(self.texture_manager)
+        
         self.keyboard_view = KeyboardView(self.renderer, shared_font)
         self.keyboard_view.set_texture_manager(self.texture_manager)
         
@@ -292,6 +304,17 @@ class GameDownloaderApp:
             self.joystick = sdl2.SDL_JoystickOpen(0) if num_joysticks > 0 else None
             if self.joystick:
                 logger.info("Joystick initialized successfully")
+                if os.environ.get("EMUDROP_DEBUG_INPUT") == "1":
+                    name = sdl2.SDL_JoystickName(self.joystick)
+                    logger.info(
+                        "[INPUT] joystick=%s buttons=%s hats=%s axes=%s"
+                        % (
+                            name.decode("utf-8", "replace") if name else "?",
+                            sdl2.SDL_JoystickNumButtons(self.joystick),
+                            sdl2.SDL_JoystickNumHats(self.joystick),
+                            sdl2.SDL_JoystickNumAxes(self.joystick),
+                        )
+                    )
         except Exception as e:
             logger.warning(f"Failed to initialize joystick: {str(e)}")
             self.joystick = None
@@ -308,6 +331,10 @@ class GameDownloaderApp:
         try:
             running = True
             last_time = sdl2.SDL_GetTicks()
+            
+            # QA hook: start directly on a given screen (e.g. EMUDROP_DEBUG_VIEW=network)
+            if os.environ.get("EMUDROP_DEBUG_VIEW") == "network":
+                self._open_network_view()
             
             # Show loading screen
             self._simulate_loading()
@@ -371,14 +398,21 @@ class GameDownloaderApp:
                     return False
             elif event.type == sdl2.SDL_JOYBUTTONDOWN:
                 button = event.jbutton.button
+                if os.environ.get("EMUDROP_DEBUG_INPUT") == "1":
+                    logger.info(f"[INPUT] JOYBUTTONDOWN button={button}")
                 if not self._handle_controller_button(button):
                     return False
                 self.held_joy_buttons[button] = time.time()
             elif event.type == sdl2.SDL_JOYBUTTONUP:
                 button = event.jbutton.button
                 self.held_joy_buttons.pop(button, None)
+            elif event.type == sdl2.SDL_JOYAXISMOTION:
+                if os.environ.get("EMUDROP_DEBUG_INPUT") == "1" and abs(event.jaxis.value) > 20000:
+                    logger.info(f"[INPUT] JOYAXIS axis={event.jaxis.axis} value={event.jaxis.value}")
             elif event.type == sdl2.SDL_JOYHATMOTION:
                 button = event.jhat.value
+                if os.environ.get("EMUDROP_DEBUG_INPUT") == "1":
+                    logger.info(f"[INPUT] JOYHAT value={button}")
                 if not self._handle_d_pad_controller_button(button):
                     return False
                 self.held_hat_button = button
@@ -525,14 +559,19 @@ class GameDownloaderApp:
             Config.CONTROLLER_BUTTON_Y: sdl2.SDLK_SPACE,
             Config.CONTROLLER_BUTTON_L: sdl2.SDLK_PAGEDOWN,
             Config.CONTROLLER_BUTTON_R: sdl2.SDLK_PAGEUP,
-            Config.CONTROLLER_BUTTON_UP: sdl2.SDLK_UP,
-            Config.CONTROLLER_BUTTON_DOWN: sdl2.SDLK_DOWN,
-            Config.CONTROLLER_BUTTON_LEFT: sdl2.SDLK_LEFT,
-            Config.CONTROLLER_BUTTON_RIGHT: sdl2.SDLK_RIGHT
+            # NOTE: the D-pad is delivered as a hat on the TrimUI family and is
+            # handled in _handle_d_pad_controller_button(). Do not add the
+            # UP/DOWN/LEFT/RIGHT entries here: their configured values are SDL
+            # hat constants (1/4/8/2) which collide with the face-button
+            # indices above and silently overwrite them in this dict.
         }
         
         if button in button_map:
+            if os.environ.get("EMUDROP_DEBUG_INPUT") == "1":
+                logger.info(f"[INPUT] button {button} -> key {button_map[button]}")
             return self._handle_input_event(button_map[button])
+        if os.environ.get("EMUDROP_DEBUG_INPUT") == "1":
+            logger.info(f"[INPUT] button {button} -> unmapped")
         return True
 
     def _handle_d_pad_controller_button(self, button):
@@ -574,6 +613,8 @@ class GameDownloaderApp:
             return self._handle_confirmation_input(key)
         elif self.view_state.showing_keyboard and self.view_state.mode == 'games':
             return self._handle_onscreen_keyboard_input(key)
+        elif self.view_state.showing_keyboard and self.view_state.mode == 'network':
+            return self._handle_network_keyboard_input(key)
         else:
             return self._handle_normal_input(key)
 
@@ -657,6 +698,10 @@ class GameDownloaderApp:
         Returns:
             bool: True to continue processing, False to exit
         """
+        # Network settings screen has its own input handling
+        if self.view_state.mode == 'network':
+            return self._handle_network_input(key)
+
         # Handle view-specific navigation keys
         if key in [sdl2.SDLK_UP, sdl2.SDLK_DOWN, sdl2.SDLK_LEFT, sdl2.SDLK_RIGHT]:
             self._handle_navigation(key)
@@ -674,6 +719,17 @@ class GameDownloaderApp:
         # Handle view switching
         if key == sdl2.SDLK_d and self.view_state.mode != 'download_status':
             self._switch_view('download_status')
+            return True
+
+        # Network / proxy settings
+        if key == sdl2.SDLK_n and self.view_state.mode == 'platforms':
+            self._open_network_view()
+            return True
+
+        # Controller: Y (mapped to SPACE) opens the network screen on the
+        # platforms view, where SPACE is otherwise unused.
+        if key == sdl2.SDLK_SPACE and self.view_state.mode == 'platforms':
+            self._open_network_view()
             return True
             
         if key == sdl2.SDLK_s and self.view_state.mode == 'games':
@@ -953,6 +1009,12 @@ class GameDownloaderApp:
             self._reset_confirmation_state()
             return True
 
+        # Leaving the network screen persists the settings
+        if self.view_state.mode == 'network':
+            self._save_network_settings(silent=True)
+            self._switch_view('platforms')
+            return True
+
         view_transitions = {
             'sources': 'games',
             'download_status': self.view_state.previous_mode,
@@ -1080,10 +1142,40 @@ class GameDownloaderApp:
             self._clear_screen()
             self._render_main_view()
             self._render_overlays()
+            # Read back the freshly drawn frame before presenting: after
+            # SDL_RenderPresent the back buffer holds the previous frame.
+            self._maybe_debug_screenshot()
             self._present_frame()
         except Exception as e:
             logger.error(f"Error in render: {str(e)}", exc_info=True)
             raise
+
+    def _maybe_debug_screenshot(self) -> None:
+        """QA hook: dump one PNG per screen (EMUDROP_DEBUG_SHOT=<prefix>)."""
+        prefix = os.environ.get("EMUDROP_DEBUG_SHOT")
+        if not prefix:
+            return
+        mode = self.view_state.mode
+        written = getattr(self, "_debug_shots_written", None)
+        if written is None:
+            written = set()
+            self._debug_shots_written = written
+        if mode in written:
+            return
+        written.add(mode)
+        try:
+            width = Config.SCREEN_WIDTH
+            height = Config.SCREEN_HEIGHT
+            buffer = (ctypes.c_ubyte * (width * height * 4))()
+            sdl2.SDL_RenderReadPixels(
+                self.renderer, None, sdl2.SDL_PIXELFORMAT_ABGR8888, buffer, width * 4
+            )
+            from PIL import Image
+            path = f"{prefix}_{mode}.png"
+            Image.frombytes("RGBA", (width, height), bytes(buffer)).save(path)
+            logger.info(f"Debug screenshot written to {path}")
+        except Exception as exc:  # pragma: no cover - QA only
+            logger.error(f"Debug screenshot failed: {exc}", exc_info=True)
 
     def _clear_screen(self) -> None:
         """Clear the screen with background color."""
@@ -1100,7 +1192,8 @@ class GameDownloaderApp:
             'platforms': self._render_platforms_view,
             'games': self._render_games_view,
             'download_status': self._render_download_view,
-            'sources': self._render_sources_view
+            'sources': self._render_sources_view,
+            'network': self._render_network_view
         }
         
         render_method = render_methods.get(self.view_state.mode)
@@ -1313,6 +1406,198 @@ class GameDownloaderApp:
             lines.append(' '.join(current_line))
         
         return lines
+
+    # ------------------------------------------------------------------
+    # Network / proxy settings screen
+    # ------------------------------------------------------------------
+
+    NETWORK_ROWS = (
+        ("ENABLED", "Proxy"),
+        ("SCHEME", "Type"),
+        ("HOST", "Host"),
+        ("PORT", "Port"),
+        ("USER", "Username"),
+        ("PASS", "Password"),
+        ("NO_PROXY", "Bypass list"),
+        ("__test__", "Test connection"),
+        ("__save__", "Save & Back"),
+    )
+
+    def _open_network_view(self) -> None:
+        """Open the proxy settings screen, loading the current proxy.conf."""
+        self.network_conf = net.current_config()
+        self.nav_state.selected_network = 0
+        self.network_edit_buffer = ""
+        self.view_state.network_edit_field = None
+        self.network_status = self._network_summary()
+        self._switch_view('network', reset_state=False)
+
+    def _network_summary(self) -> str:
+        conf = self.network_conf
+        if conf.get("ENABLED") != "1":
+            return "Direct connection"
+        host = conf.get("HOST", "")
+        port = conf.get("PORT", "")
+        if not host or not port:
+            return "Proxy enabled but Host/Port missing"
+        user = conf.get("USER", "")
+        return f"{conf.get('SCHEME', 'http')}://{host}:{port}" + (f" (user: {user})" if user else "")
+
+    def _network_display_rows(self):
+        """Build the (label, value) rows rendered by NetworkView."""
+        conf = self.network_conf
+        rows = []
+        for key, label in self.NETWORK_ROWS:
+            if key == "ENABLED":
+                value = "On" if conf.get("ENABLED") == "1" else "Off"
+            elif key == "SCHEME":
+                value = (conf.get("SCHEME") or "http").lower()
+            elif key == "PASS":
+                value = "****" if conf.get("PASS") else "-"
+            elif key == "__test__":
+                value = "Run"
+            elif key == "__save__":
+                value = "Apply"
+            else:
+                value = conf.get(key) or "-"
+            rows.append((label, value))
+        return rows
+
+    def _handle_network_input(self, key) -> bool:
+        """Input handling for the network settings screen."""
+        total = len(self.NETWORK_ROWS)
+        if key == sdl2.SDLK_UP:
+            self.nav_state.selected_network = (self.nav_state.selected_network - 1) % total
+        elif key == sdl2.SDLK_DOWN:
+            self.nav_state.selected_network = (self.nav_state.selected_network + 1) % total
+        elif key in (sdl2.SDLK_LEFT, sdl2.SDLK_RIGHT):
+            self._toggle_network_row(self.NETWORK_ROWS[self.nav_state.selected_network][0])
+        elif key == sdl2.SDLK_RETURN:
+            self._activate_network_row()
+        elif key == sdl2.SDLK_BACKSPACE:
+            self._save_network_settings(silent=True)
+            self._switch_view('platforms')
+        return True
+
+    def _toggle_network_row(self, field: str) -> None:
+        if field == "ENABLED":
+            self.network_conf["ENABLED"] = "0" if self.network_conf.get("ENABLED") == "1" else "1"
+        elif field == "SCHEME":
+            current = (self.network_conf.get("SCHEME") or "http").lower()
+            self.network_conf["SCHEME"] = "https" if current == "http" else "http"
+        self.network_status = self._network_summary()
+
+    def _activate_network_row(self) -> None:
+        field = self.NETWORK_ROWS[self.nav_state.selected_network][0]
+        if field == "__test__":
+            self._test_network_connection()
+        elif field == "__save__":
+            self._save_network_settings()
+        elif field in ("ENABLED", "SCHEME"):
+            self._toggle_network_row(field)
+        else:
+            self.view_state.network_edit_field = field
+            self.network_edit_buffer = self.network_conf.get(field, "") or ""
+            self.view_state.showing_keyboard = True
+            self.nav_state.keyboard_selected_key = 0
+
+    def _handle_network_keyboard_input(self, key) -> bool:
+        """On-screen keyboard input while editing a network field."""
+        current_row, current_pos = self.keyboard_view.get_keyboard_position(self.nav_state.keyboard_selected_key)
+        current_row_keys = self.keyboard_view.keyboard_layout[current_row]
+        row_length = len(current_row_keys)
+
+        if key == sdl2.SDLK_LEFT:
+            new_pos = (current_pos - 1) % row_length
+            self.nav_state.keyboard_selected_key = self.keyboard_view.get_key_index(current_row, new_pos)
+        elif key == sdl2.SDLK_RIGHT:
+            new_pos = (current_pos + 1) % row_length
+            self.nav_state.keyboard_selected_key = self.keyboard_view.get_key_index(current_row, new_pos)
+        elif key == sdl2.SDLK_UP and current_row > 0:
+            prev_row = current_row - 1
+            prev_row_length = len(self.keyboard_view.keyboard_layout[prev_row])
+            relative_pos = int((current_pos / row_length) * prev_row_length)
+            self.nav_state.keyboard_selected_key = self.keyboard_view.get_key_index(prev_row, relative_pos)
+        elif key == sdl2.SDLK_DOWN and current_row < len(self.keyboard_view.keyboard_layout) - 1:
+            next_row = current_row + 1
+            next_row_length = len(self.keyboard_view.keyboard_layout[next_row])
+            relative_pos = int((current_pos / row_length) * next_row_length)
+            self.nav_state.keyboard_selected_key = self.keyboard_view.get_key_index(next_row, relative_pos)
+        elif key == sdl2.SDLK_BACKSPACE:
+            self._cancel_network_edit()
+        elif key == sdl2.SDLK_RETURN:
+            selected_key = current_row_keys[current_pos]
+            if selected_key == '<':
+                self.network_edit_buffer = self.network_edit_buffer[:-1]
+            elif selected_key == 'Return':
+                self._commit_network_edit()
+            elif selected_key == 'Space':
+                self.network_edit_buffer += ' '
+            elif selected_key == 'Clear':
+                self.network_edit_buffer = ""
+            else:
+                self.network_edit_buffer += selected_key
+        return True
+
+    def _cancel_network_edit(self) -> None:
+        self.view_state.showing_keyboard = False
+        self.view_state.network_edit_field = None
+        self.network_edit_buffer = ""
+
+    def _commit_network_edit(self) -> None:
+        field = self.view_state.network_edit_field
+        value = self.network_edit_buffer.strip()
+        if field == "PORT" and value and not value.isdigit():
+            self.network_status = "Port must be numeric"
+            return
+        if field:
+            self.network_conf[field] = value
+        self.view_state.showing_keyboard = False
+        self.view_state.network_edit_field = None
+        self.network_edit_buffer = ""
+        self.network_status = self._network_summary()
+
+    def _save_network_settings(self, silent: bool = False) -> None:
+        """Persist proxy.conf (shared with the OTA shell scripts) and reload it."""
+        ok = net.save_config(self.network_conf)
+        self.network_status = "Saved" if ok else "Failed to save proxy.conf"
+        logger.info(f"Network settings saved: {self._network_summary()} (ok={ok})")
+        if not silent:
+            if ok:
+                self.alert_manager.show_success("Network settings saved", self._network_summary())
+            else:
+                self.alert_manager.show_error("Could not save proxy.conf")
+
+    def _test_network_connection(self) -> None:
+        """Save, then test the configured path in a background thread."""
+        self._save_network_settings(silent=True)
+        self.network_status = "Testing connection..."
+        self.alert_manager.show_info("Testing connection...", self._network_summary())
+
+        def worker():
+            ok, message = net.test_connection()
+            self.network_status = ("OK: " if ok else "FAILED: ") + message
+            if ok:
+                self.alert_manager.show_success("Connection OK", message)
+            else:
+                self.alert_manager.show_error("Connection failed", message)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _render_network_view(self) -> None:
+        self.network_view.render(
+            self.nav_state.selected_network,
+            self._network_display_rows(),
+            self.network_status,
+        )
+        if self.view_state.showing_keyboard:
+            field = self.view_state.network_edit_field or ""
+            display_text = "*" * len(self.network_edit_buffer) if field == "PASS" else self.network_edit_buffer
+            self.keyboard_view.render(
+                self.nav_state.keyboard_selected_key,
+                display_text,
+                prompt=f"Edit {field}",
+            )
 
     def cleanup(self) -> None:
         """Clean up resources before application exit."""

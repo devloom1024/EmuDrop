@@ -35,6 +35,7 @@ class platformsView(BaseView):
                     "downloads.png"
                 ],
                 'right': [
+                    "network.png",
                     "previous-page.png",
                     "next-page.png"
                 ]

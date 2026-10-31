@@ -1,4 +1,3 @@
-import requests
 import urllib3
 import hashlib
 import base64
@@ -6,6 +5,7 @@ import os
 import shutil
 import re
 from utils.config import Config
+from utils.net import get_session
 from utils.image_cache import ImageCache
 from utils.logger import logger
 import xml.etree.ElementTree as ET
@@ -24,8 +24,7 @@ class ScreenScraper:
         self.pass_ss = Config.SCRAPER_API_SSPASS
         
         # Setup session with SSL verification disabled
-        self.session = requests.Session()
-        self.session.verify = False
+        self.session = get_session(verify=False)
     
     def xml_indent(self, elem, level=0):
         i = "\n" + level * "  "

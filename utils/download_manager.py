@@ -1,11 +1,12 @@
 import os
 import shutil
-from requests import Session
 import threading
+import requests
 import time
 import json
 from dataclasses import dataclass, fields
 from utils.config import Config
+from utils.net import get_session
 from utils.logger import logger
 from utils.screenscrapper import ScreenScraper
 from utils.games_extractor_converter import GamesExtractorConverter
@@ -63,7 +64,7 @@ class DownloadManager:
         
         # Thread references
         self.download_url = None
-        self.session = Session()
+        self.session = get_session()
         self.download_thread = None
         self.size_check_thread = None
         self.size_check_complete = threading.Event()
@@ -167,6 +168,29 @@ class DownloadManager:
             self.pause_download.clear()
             self.status["is_paused"] = False
             logger.info(f"Download resumed: {self.game_prop.name}")
+    def _get_with_tls_fallback(self, url, **kwargs):
+        """GET a URL, retrying once without TLS verification on cert errors.
+
+        Several ROM mirrors serve expired or misconfigured certificates. Failing
+        the whole download in that case is worse for the user than accepting the
+        connection, so a certificate error downgrades to an unverified request
+        (logged as a warning). Used as a context manager.
+        """
+        try:
+            return self.session.get(url, **kwargs)
+        except requests.exceptions.SSLError as exc:
+            logger.warning(f"TLS verification failed, retrying without verification: {exc}")
+            self.session.verify = False
+            return self.session.get(url, **kwargs)
+
+    def _head_with_tls_fallback(self, url, **kwargs):
+        """HEAD variant of :meth:`_get_with_tls_fallback`."""
+        try:
+            return self.session.head(url, **kwargs)
+        except requests.exceptions.SSLError as exc:
+            logger.warning(f"TLS verification failed while checking size, retrying without verification: {exc}")
+            self.session.verify = False
+            return self.session.head(url, **kwargs)
 
     def _download_worker(self, download_url):
         """
@@ -175,7 +199,7 @@ class DownloadManager:
         :param download_url: URL to download from
         """
         try:
-            with self.session.get(download_url, stream=True, timeout=30) as response:
+            with self._get_with_tls_fallback(download_url, stream=True, timeout=30) as response:
                 response.raise_for_status()
                 
                 # Get total file size
@@ -358,7 +382,7 @@ class DownloadManager:
                 return
             
             # Make a HEAD request to get content length
-            response = self.session.head(download_url, timeout=10, allow_redirects=True)
+            response = self._head_with_tls_fallback(download_url, timeout=10, allow_redirects=True)
             if response.status_code == 200:
                 self.status["total_size"] = int(response.headers.get('content-length', 0))
             else:
