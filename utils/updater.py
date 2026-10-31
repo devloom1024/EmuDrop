@@ -227,7 +227,7 @@ cleanup_lock() {
 }
 trap cleanup_lock EXIT INT TERM HUP
 
-: > "$LOCK"
+echo $$ > "$LOCK"
 
 i=0
 while [ $i -lt 60 ]; do

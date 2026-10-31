@@ -12,6 +12,14 @@ chmod -R 777 .
 # ---------------------------------------------------------------------------
 LOCK="$APP_DIR/.updating"
 if [ -f "$LOCK" ]; then
+    lock_pid=$(cat "$LOCK" 2>/dev/null)
+    if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+        echo "Removing stale update lock (updater not running)"
+        rm -f "$LOCK"
+    fi
+fi
+
+if [ -f "$LOCK" ]; then
     i=0
     while [ -f "$LOCK" ] && [ $i -lt 120 ]; do
         now=$(date +%s)
