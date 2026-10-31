@@ -1763,7 +1763,7 @@ class GameDownloaderApp:
             try:
                 script = updater.prepare_app_update(info, progress_cb=progress)
                 updater.write_update_target(info.get("version", ""))
-                self._set_update_progress(1.0, "Installing update - EmuDrop will restart...")
+                self._set_update_progress(1.0, "Installing update - do not power off...")
                 time.sleep(1.5)  # let the user read the message before we exit
                 updater.launch_update_script(script)
                 self.shutdown_for_update = True

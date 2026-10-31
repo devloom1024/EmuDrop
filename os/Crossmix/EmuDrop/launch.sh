@@ -12,6 +12,11 @@ while [ -f "$APP_DIR/.updating" ] && [ $i -lt 90 ]; do
     i=$((i + 1))
 done
 
+# Recover from an update that was interrupted (e.g. power loss mid-copy)
+if [ ! -f "$APP_DIR/EmuDrop" ] && [ -f "$APP_DIR/.update_backup/EmuDrop" ]; then
+    cp -f "$APP_DIR/.update_backup/EmuDrop" "$APP_DIR/EmuDrop"
+fi
+
 
 export PYSDL2_DLL_PATH="/usr/trimui/lib/"
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/mnt/SDCARD/System/lib/

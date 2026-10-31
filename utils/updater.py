@@ -249,12 +249,19 @@ ok=1
 for item in "$STAGE"/*; do
     [ -e "$item" ] || continue
     name=$(basename "$item")
+    # The executable is replaced last, through a rename, so an interrupted
+    # update never leaves a half-written binary behind.
+    [ "$name" = "EmuDrop" ] && continue
     if [ "$name" = "assets" ]; then
         cp -rf "$STAGE/assets/." "$APP_DIR/assets/" || ok=0
     else
         cp -rf "$item" "$APP_DIR/" || ok=0
     fi
 done
+
+if [ -f "$STAGE/EmuDrop" ]; then
+    cp -f "$STAGE/EmuDrop" "$APP_DIR/EmuDrop.new" && mv -f "$APP_DIR/EmuDrop.new" "$APP_DIR/EmuDrop" || ok=0
+fi
 
 [ -f "$BACKUP/proxy.conf" ] && { cp -f "$BACKUP/proxy.conf" "$APP_DIR/assets/proxy.conf" || ok=0; }
 [ -s "$APP_DIR/version.txt" ] || ok=0
