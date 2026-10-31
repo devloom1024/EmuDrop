@@ -305,8 +305,12 @@ fi
 rm -f "$LOCK"
 trap - EXIT INT TERM HUP
 
-# Restart the application through its normal launcher.
-exec sh "$APP_DIR/launch.sh"
+# Do not restart the app from here: the firmware launcher and this script would
+# both start it, and two concurrent PyInstaller instances can delete each
+# other's extraction directory in /tmp. The user starts EmuDrop again when
+# ready; it reports the update result on that next launch.
+echo "update finished"
+exit 0
 """
 
 
