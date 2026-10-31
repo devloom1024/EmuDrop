@@ -55,9 +55,32 @@ instance_lock() {
     return 1
 }
 if ! instance_lock; then
-    echo "EmuDrop is already running"
-    exit 0
+    # The app is still running (possibly invisible behind the launcher after an
+    # update): replace it so every tap reliably ends up on the app screen.
+    echo "EmuDrop already running, restarting it to take over the screen"
+    killall EmuDrop 2>/dev/null
+    i=0
+    while pidof EmuDrop > /dev/null 2>&1 && [ $i -lt 10 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    if pidof EmuDrop > /dev/null 2>&1; then
+        kill -9 $(pidof EmuDrop) 2>/dev/null
+        sleep 1
+    fi
+    rm -rf "$RUNTIME_LOCK"
+    if ! instance_lock; then
+        echo "Could not acquire the instance lock"
+        exit 0
+    fi
 fi
+
+release_instance_lock() {
+    if [ "$(cat "$RUNTIME_LOCK/pid" 2>/dev/null)" = "$$" ]; then
+        rm -rf "$RUNTIME_LOCK"
+    fi
+}
+trap release_instance_lock EXIT INT TERM HUP
 
 
 export PYSDL2_DLL_PATH="/usr/trimui/lib/"
@@ -111,5 +134,5 @@ export IMGS_DIR="/mnt/SDCARD/Imgs/{SYSTEM}/{IMAGE_NAME}.png"
 export EXECUTABLES_DIR="$APP_DIR/assets/executables/"
 
 "$APP_DIR/EmuDrop"
-rm -rf "$RUNTIME_LOCK"
+release_instance_lock
 rm /tmp/stay_awake
