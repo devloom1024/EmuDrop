@@ -4,17 +4,43 @@ cd $APP_DIR
 
 chmod -R 777 .
 
-# Wait for an in-progress self-update to finish before starting (the updater
-# writes this lock while it replaces files, and restarts us when done).
-i=0
-while [ -f "$APP_DIR/.updating" ] && [ $i -lt 90 ]; do
-    sleep 1
-    i=$((i + 1))
-done
+# ---------------------------------------------------------------------------
+# Self-update handling
+# The updater writes .updating while it replaces files. A crash or power loss
+# can leave that lock (and half-copied files) behind, so a stale lock is
+# detected by its age and cleaned up, otherwise the app would look frozen.
+# ---------------------------------------------------------------------------
+LOCK="$APP_DIR/.updating"
+if [ -f "$LOCK" ]; then
+    i=0
+    while [ -f "$LOCK" ] && [ $i -lt 120 ]; do
+        now=$(date +%s)
+        mtime=$(stat -c %Y "$LOCK" 2>/dev/null || echo "$now")
+        if [ $((now - mtime)) -gt 120 ]; then
+            echo "Removing stale update lock"
+            break
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    rm -f "$LOCK"
+fi
 
-# Recover from an update that was interrupted (e.g. power loss mid-copy)
+# Recover from an update that was interrupted (power loss mid-copy)
 if [ ! -f "$APP_DIR/EmuDrop" ] && [ -f "$APP_DIR/.update_backup/EmuDrop" ]; then
+    echo "Restoring executable from update backup"
     cp -f "$APP_DIR/.update_backup/EmuDrop" "$APP_DIR/EmuDrop"
+fi
+rm -f "$APP_DIR/EmuDrop.new"
+rm -rf "$APP_DIR/.update_staging" "$APP_DIR/.update_backup"
+
+# Never run two instances at once (they fight over the framebuffer)
+if pidof EmuDrop > /dev/null 2>&1; then
+    sleep 2
+    if pidof EmuDrop > /dev/null 2>&1; then
+        killall EmuDrop 2>/dev/null
+        sleep 1
+    fi
 fi
 
 

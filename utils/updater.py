@@ -215,13 +215,18 @@ UPDATE_SCRIPT = """#!/bin/sh
 APP_DIR="$1"
 STAGE="$2"
 BACKUP="$APP_DIR/.update_backup"
+LOCK="$APP_DIR/.updating"
 LOG="/tmp/emudrop_update.log"
 
 exec >> "$LOG" 2>&1
 echo "=== update $(date) ==="
 
-# Prevent launch.sh from starting the app while files are being replaced.
-LOCK="$APP_DIR/.updating"
+# Always drop the lock, even if we are killed half way.
+cleanup_lock() {
+    rm -f "$LOCK"
+}
+trap cleanup_lock EXIT INT TERM HUP
+
 : > "$LOCK"
 
 i=0
@@ -237,21 +242,23 @@ cd "$APP_DIR" || exit 1
 rm -rf "$BACKUP"
 mkdir -p "$BACKUP"
 
-# Keep user data that must survive an update (proxy.conf is shipped in the
-# package, catalog.db is not, so only proxy.conf needs saving).
+# Save the user's proxy configuration (the only file in assets that the package
+# would overwrite and that the user may have customised).
 cp -f assets/proxy.conf "$BACKUP/proxy.conf" 2>/dev/null
 
-for item in EmuDrop launch.sh app_ota.sh db_ota.sh config.json icon.png version.txt; do
-    [ -f "$item" ] && cp -f "$item" "$BACKUP/$item"
+for item in launch.sh app_ota.sh db_ota.sh config.json icon.png; do
+    [ -f "$APP_DIR/$item" ] && cp -f "$APP_DIR/$item" "$BACKUP/$item"
 done
 
 ok=1
 for item in "$STAGE"/*; do
     [ -e "$item" ] || continue
     name=$(basename "$item")
-    # The executable is replaced last, through a rename, so an interrupted
-    # update never leaves a half-written binary behind.
-    [ "$name" = "EmuDrop" ] && continue
+    # The executable and version.txt are handled last, so an interrupted update
+    # leaves a consistent install (old binary + old version string).
+    case "$name" in
+        EmuDrop|version.txt) continue ;;
+    esac
     if [ "$name" = "assets" ]; then
         cp -rf "$STAGE/assets/." "$APP_DIR/assets/" || ok=0
     else
@@ -259,26 +266,44 @@ for item in "$STAGE"/*; do
     fi
 done
 
+# Executable: copy next to the old one and rename it into place.
 if [ -f "$STAGE/EmuDrop" ]; then
-    cp -f "$STAGE/EmuDrop" "$APP_DIR/EmuDrop.new" && mv -f "$APP_DIR/EmuDrop.new" "$APP_DIR/EmuDrop" || ok=0
+    if cp -f "$STAGE/EmuDrop" "$APP_DIR/EmuDrop.new"; then
+        if [ "$(wc -c < "$STAGE/EmuDrop")" = "$(wc -c < "$APP_DIR/EmuDrop.new")" ]; then
+            mv -f "$APP_DIR/EmuDrop.new" "$APP_DIR/EmuDrop" || ok=0
+        else
+            echo "binary copy incomplete"
+            rm -f "$APP_DIR/EmuDrop.new"
+            ok=0
+        fi
+    else
+        ok=0
+    fi
 fi
 
 [ -f "$BACKUP/proxy.conf" ] && { cp -f "$BACKUP/proxy.conf" "$APP_DIR/assets/proxy.conf" || ok=0; }
-[ -s "$APP_DIR/version.txt" ] || ok=0
-[ -f "$APP_DIR/EmuDrop" ] || ok=0
 
-rm -f "$LOCK"
+if [ "$ok" = "1" ]; then
+    # Version stamp is written last: it marks a fully successful swap.
+    if [ -f "$STAGE/version.txt" ]; then
+        cp -f "$STAGE/version.txt" "$APP_DIR/version.txt" || ok=0
+    fi
+fi
 
 if [ "$ok" = "1" ]; then
     echo "update ok: $(head -n 1 "$APP_DIR/version.txt")"
     rm -rf "$STAGE" "$BACKUP"
 else
     echo "update FAILED, restoring backup"
-    for item in EmuDrop launch.sh app_ota.sh db_ota.sh config.json icon.png version.txt; do
+    for item in EmuDrop launch.sh app_ota.sh db_ota.sh config.json icon.png; do
         [ -f "$BACKUP/$item" ] && cp -f "$BACKUP/$item" "$APP_DIR/$item"
     done
+    rm -f "$APP_DIR/EmuDrop.new"
     rm -rf "$STAGE"
 fi
+
+rm -f "$LOCK"
+trap - EXIT INT TERM HUP
 
 # Restart the application through its normal launcher.
 exec sh "$APP_DIR/launch.sh"
