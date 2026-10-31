@@ -379,6 +379,15 @@ class GameDownloaderApp:
                     if self.shutdown_for_update:
                         running = False
                     
+                    # Dialogs, key overlays and progress screens must stay live
+                    # even when nobody touches the controls (e.g. an update
+                    # prompt that appears while the user is idle).
+                    if (self.alert_manager.is_showing()
+                            or self.view_state.showing_confirmation
+                            or self.view_state.showing_keyboard
+                            or self.update_busy):
+                        self.needs_redraw = True
+
                     # Render only when state has changed
                     if self.needs_redraw:
                         self._render()
@@ -1968,6 +1977,7 @@ class GameDownloaderApp:
         self.view_state.showing_confirmation = True
         self.view_state.confirmation_type = confirmation_type
         self.view_state.confirmation_selected = selected
+        self.needs_redraw = True
 
     def _handle_pause_resume(self):
         """Handle pause/resume functionality for downloads"""
