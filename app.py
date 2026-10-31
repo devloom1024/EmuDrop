@@ -12,6 +12,7 @@ import shutil
 import math
 import time
 import threading
+import textwrap
 from dataclasses import dataclass
 from contextlib import contextmanager
 
@@ -346,6 +347,9 @@ class GameDownloaderApp:
             
             # Show loading screen
             self._simulate_loading()
+
+            # Report the outcome of an update started in a previous session
+            self._report_update_result()
 
             # Look for updates in the background (never blocks startup)
             self._start_update_check()
@@ -1367,7 +1371,10 @@ class GameDownloaderApp:
                         continue
                     notes.append(line)
                 if notes:
-                    lines.extend((line[:64], Theme.TEXT_SECONDARY) for line in notes[:5])
+                    wrapped = []
+                    for line in notes[:6]:
+                        wrapped.extend(textwrap.wrap(line, 46) or [line])
+                    lines.extend((line, Theme.TEXT_SECONDARY) for line in wrapped[:8])
                 else:
                     lines.append(("No changelog provided", Theme.TEXT_PLACEHOLDER))
                 return ("EmuDrop update available", lines)
@@ -1485,6 +1492,7 @@ class GameDownloaderApp:
         ("USER", "Username"),
         ("PASS", "Password"),
         ("NO_PROXY", "Bypass list"),
+        ("__version__", "Version"),
         ("__test__", "Test connection"),
         ("__save__", "Save & Back"),
     )
@@ -1520,6 +1528,8 @@ class GameDownloaderApp:
                 value = (conf.get("SCHEME") or "http").lower()
             elif key == "PASS":
                 value = "****" if conf.get("PASS") else "-"
+            elif key == "__version__":
+                value = updater.read_versions()[0]
             elif key == "__test__":
                 value = "Run"
             elif key == "__save__":
@@ -1559,6 +1569,8 @@ class GameDownloaderApp:
             self._test_network_connection()
         elif field == "__save__":
             self._save_network_settings()
+        elif field == "__version__":
+            return
         elif field in ("ENABLED", "SCHEME"):
             self._toggle_network_row(field)
         else:
@@ -1701,8 +1713,25 @@ class GameDownloaderApp:
             # Ask only once per launch: cancelling means "ask again next time"
             self.pending_updates[kind] = None
             self.view_state.update_info = info
-            self._show_confirmation(f"{kind}_update")
+            self._show_confirmation(f"{kind}_update", selected=True)
             return
+
+    def _report_update_result(self) -> None:
+        """Tell the user whether the update they started actually landed."""
+        updater.cleanup_stale_update_files()
+        result = updater.pop_update_result()
+        if not result:
+            return
+        target, installed = result
+        if target and target == installed:
+            logger.info(f"Update completed: now running {installed}")
+            self.alert_manager.show_success("Update complete", f"Now running {installed}")
+        else:
+            logger.warning(f"Update not completed (target {target}, running {installed})")
+            self.alert_manager.show_warning(
+                "Update not completed",
+                f"Still running {installed}",
+            )
 
     def _start_app_update(self, info) -> None:
         self.update_busy = True
@@ -1715,7 +1744,13 @@ class GameDownloaderApp:
         def worker():
             try:
                 script = updater.prepare_app_update(info, progress_cb=progress)
-                self.alert_manager.show_info("Updating EmuDrop", "Installing, EmuDrop will restart...")
+                updater.write_update_target(info.get("version", ""))
+                self.alert_manager.show_info(
+                    "Updating EmuDrop",
+                    "Installing, EmuDrop will restart in a moment...",
+                )
+                self.needs_redraw = True
+                time.sleep(1.2)  # let the user read the message before we exit
                 updater.launch_update_script(script)
                 self.shutdown_for_update = True
             except Exception as exc:
@@ -1910,15 +1945,15 @@ class GameDownloaderApp:
         update_thread.daemon = True
         update_thread.start()
 
-    def _show_confirmation(self, confirmation_type: str) -> None:
+    def _show_confirmation(self, confirmation_type: str, selected: bool = False) -> None:
         """Show confirmation dialog with specified type.
-        
-        Args:
-            confirmation_type: Type of confirmation ('download' or 'cancel' or 'exit)
+
+        ``selected`` preselects the first (left) button; update prompts default
+        to "Update" so pressing A does what the user expects.
         """
         self.view_state.showing_confirmation = True
         self.view_state.confirmation_type = confirmation_type
-        self.view_state.confirmation_selected = False
+        self.view_state.confirmation_selected = selected
 
     def _handle_pause_resume(self):
         """Handle pause/resume functionality for downloads"""

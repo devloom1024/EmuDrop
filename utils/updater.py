@@ -198,10 +198,14 @@ def download(url, destination, progress_cb=None, chunk_size=65536):
 
 def _safe_extract(archive_path, target_dir):
     """Extract a tar.gz without allowing paths outside ``target_dir``."""
+    root = os.path.normpath(target_dir)
     with tarfile.open(archive_path, "r:gz") as tar:
         for member in tar.getmembers():
-            member_path = os.path.normpath(os.path.join(target_dir, member.name))
-            if not member_path.startswith(os.path.normpath(target_dir) + os.sep):
+            name = member.name.replace("\\", "/")
+            if name in (".", "./"):
+                continue
+            member_path = os.path.normpath(os.path.join(root, name))
+            if member_path != root and not member_path.startswith(root + os.sep):
                 raise RuntimeError(f"Unsafe path in archive: {member.name}")
         tar.extractall(target_dir)
 
@@ -211,6 +215,10 @@ UPDATE_SCRIPT = """#!/bin/sh
 APP_DIR="$1"
 STAGE="$2"
 BACKUP="$APP_DIR/.update_backup"
+LOG="/tmp/emudrop_update.log"
+
+exec >> "$LOG" 2>&1
+echo "=== update $(date) ==="
 
 i=0
 while [ $i -lt 60 ]; do
@@ -233,20 +241,32 @@ for item in EmuDrop launch.sh app_ota.sh db_ota.sh config.json icon.png version.
     [ -f "$item" ] && cp -f "$item" "$BACKUP/$item"
 done
 
+ok=1
 for item in "$STAGE"/*; do
     [ -e "$item" ] || continue
     name=$(basename "$item")
     if [ "$name" = "assets" ]; then
-        cp -rf "$STAGE/assets/." "$APP_DIR/assets/"
+        cp -rf "$STAGE/assets/." "$APP_DIR/assets/" || ok=0
     else
-        cp -rf "$item" "$APP_DIR/"
+        cp -rf "$item" "$APP_DIR/" || ok=0
     fi
 done
 
-[ -f "$BACKUP/proxy.conf" ] && cp -f "$BACKUP/proxy.conf" "$APP_DIR/assets/proxy.conf"
-[ -f "$BACKUP/catalog.db" ] && cp -f "$BACKUP/catalog.db" "$APP_DIR/assets/catalog.db"
+[ -f "$BACKUP/proxy.conf" ] && { cp -f "$BACKUP/proxy.conf" "$APP_DIR/assets/proxy.conf" || ok=0; }
+[ -f "$BACKUP/catalog.db" ] && { cp -f "$BACKUP/catalog.db" "$APP_DIR/assets/catalog.db" || ok=0; }
+[ -s "$APP_DIR/version.txt" ] || ok=0
+[ -f "$APP_DIR/EmuDrop" ] || ok=0
 
-rm -rf "$STAGE"
+if [ "$ok" = "1" ]; then
+    echo "update ok: $(head -n 1 "$APP_DIR/version.txt")"
+    rm -rf "$STAGE" "$BACKUP"
+else
+    echo "update FAILED, restoring backup"
+    for item in EmuDrop launch.sh app_ota.sh db_ota.sh config.json icon.png version.txt; do
+        [ -f "$BACKUP/$item" ] && cp -f "$BACKUP/$item" "$APP_DIR/$item"
+    done
+    rm -rf "$STAGE"
+fi
 
 # Restart the application through its normal launcher.
 exec sh "$APP_DIR/launch.sh"
@@ -279,10 +299,13 @@ def prepare_app_update(info, progress_cb=None):
     os.makedirs(staging, exist_ok=True)
 
     archive = os.path.join(_APP_DIR, ".update_staging.tar.gz")
-    download(info["url"], archive, progress_cb=progress_cb)
-    _safe_extract(archive, staging)
-    _normalize_stage(staging)
-    os.remove(archive)
+    try:
+        download(info["url"], archive, progress_cb=progress_cb)
+        _safe_extract(archive, staging)
+        _normalize_stage(staging)
+    finally:
+        if os.path.exists(archive):
+            os.remove(archive)
 
     script = os.path.join("/tmp", "emudrop_apply_update.sh")
     with open(script, "w", encoding="utf-8") as handle:
@@ -327,3 +350,46 @@ def swap_staged_database():
     except OSError as exc:
         logger.error(f"Could not install staged catalog database: {exc}")
         return False
+
+
+RESULT_FILE = ".update_target"
+
+
+def write_update_target(version):
+    """Remember which version an update was started for (shown after restart)."""
+    try:
+        with open(os.path.join(_APP_DIR, RESULT_FILE), "w", encoding="utf-8") as handle:
+            handle.write(version or "")
+    except OSError as exc:
+        logger.warning(f"Could not write update marker: {exc}")
+
+
+def pop_update_result():
+    """Return ``(target_version, installed_version)`` and clear the marker."""
+    path = os.path.join(_APP_DIR, RESULT_FILE)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            target = handle.read().strip()
+    except OSError:
+        target = ""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    installed, _ = read_versions()
+    return target, installed
+
+
+def cleanup_stale_update_files():
+    """Remove leftovers of an interrupted update attempt."""
+    for name in (".update_staging", ".update_staging.tar.gz"):
+        path = os.path.join(_APP_DIR, name)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        elif os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
