@@ -220,6 +220,10 @@ LOG="/tmp/emudrop_update.log"
 exec >> "$LOG" 2>&1
 echo "=== update $(date) ==="
 
+# Prevent launch.sh from starting the app while files are being replaced.
+LOCK="$APP_DIR/.updating"
+: > "$LOCK"
+
 i=0
 while [ $i -lt 60 ]; do
     if ! pidof EmuDrop > /dev/null 2>&1; then
@@ -233,9 +237,9 @@ cd "$APP_DIR" || exit 1
 rm -rf "$BACKUP"
 mkdir -p "$BACKUP"
 
-# Keep user data that must survive an update.
+# Keep user data that must survive an update (proxy.conf is shipped in the
+# package, catalog.db is not, so only proxy.conf needs saving).
 cp -f assets/proxy.conf "$BACKUP/proxy.conf" 2>/dev/null
-cp -f assets/catalog.db "$BACKUP/catalog.db" 2>/dev/null
 
 for item in EmuDrop launch.sh app_ota.sh db_ota.sh config.json icon.png version.txt; do
     [ -f "$item" ] && cp -f "$item" "$BACKUP/$item"
@@ -253,9 +257,10 @@ for item in "$STAGE"/*; do
 done
 
 [ -f "$BACKUP/proxy.conf" ] && { cp -f "$BACKUP/proxy.conf" "$APP_DIR/assets/proxy.conf" || ok=0; }
-[ -f "$BACKUP/catalog.db" ] && { cp -f "$BACKUP/catalog.db" "$APP_DIR/assets/catalog.db" || ok=0; }
 [ -s "$APP_DIR/version.txt" ] || ok=0
 [ -f "$APP_DIR/EmuDrop" ] || ok=0
+
+rm -f "$LOCK"
 
 if [ "$ok" = "1" ]; then
     echo "update ok: $(head -n 1 "$APP_DIR/version.txt")"

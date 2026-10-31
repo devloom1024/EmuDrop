@@ -4,6 +4,15 @@ cd $APP_DIR
 
 chmod -R 777 .
 
+# Wait for an in-progress self-update to finish before starting (the updater
+# writes this lock while it replaces files, and restarts us when done).
+i=0
+while [ -f "$APP_DIR/.updating" ] && [ $i -lt 90 ]; do
+    sleep 1
+    i=$((i + 1))
+done
+
+
 export PYSDL2_DLL_PATH="/usr/trimui/lib/"
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/mnt/SDCARD/System/lib/
 export INFOSCREEN="/mnt/SDCARD/System/usr/trimui/scripts/infoscreen.sh"
