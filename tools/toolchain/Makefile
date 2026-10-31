@@ -66,6 +66,7 @@ release: .check .build
 			cp -r assets/* dist/.release/EmuDrop/assets/ && \
 			cp 'device/$(DEVICE)/'* dist/.release/EmuDrop/assets/ && \
 			printf '%s\\n%s\\n' '$(VERSION)' '$(DB_VERSION)' > dist/.release/EmuDrop/version.txt && \
+			python3 tools/toolchain/stamp_ids.py dist/.release/EmuDrop && \
 			rm -rf dist/EmuDrop && \
 			mv dist/.release/* dist/ && \
 			rmdir dist/.release"

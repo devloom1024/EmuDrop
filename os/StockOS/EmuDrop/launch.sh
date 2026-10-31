@@ -12,25 +12,13 @@ chmod -R 777 .
 # ---------------------------------------------------------------------------
 LOCK="$APP_DIR/.updating"
 if [ -f "$LOCK" ]; then
-    lock_pid=$(cat "$LOCK" 2>/dev/null)
-    if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
-        echo "Removing stale update lock (updater not running)"
-        rm -f "$LOCK"
+    holder=$(cat "$LOCK" 2>/dev/null)
+    if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+        # Never block the firmware launcher while files are being replaced.
+        echo "Update in progress, try again in a moment"
+        exit 0
     fi
-fi
-
-if [ -f "$LOCK" ]; then
-    i=0
-    while [ -f "$LOCK" ] && [ $i -lt 120 ]; do
-        now=$(date +%s)
-        mtime=$(stat -c %Y "$LOCK" 2>/dev/null || echo "$now")
-        if [ $((now - mtime)) -gt 120 ]; then
-            echo "Removing stale update lock"
-            break
-        fi
-        sleep 1
-        i=$((i + 1))
-    done
+    echo "Removing stale update lock"
     rm -f "$LOCK"
 fi
 
@@ -51,6 +39,10 @@ instance_lock() {
         return 0
     fi
     holder=$(cat "$RUNTIME_LOCK/pid" 2>/dev/null)
+    if [ -z "$holder" ]; then
+        sleep 1    # concurrent launcher may still be writing its pid
+        holder=$(cat "$RUNTIME_LOCK/pid" 2>/dev/null)
+    fi
     if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
         return 1
     fi

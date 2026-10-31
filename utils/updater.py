@@ -259,12 +259,21 @@ for item in "$STAGE"/*; do
     case "$name" in
         EmuDrop|version.txt) continue ;;
     esac
-    if [ "$name" = "assets" ]; then
-        cp -rf "$STAGE/assets/." "$APP_DIR/assets/" || ok=0
-    elif [ "$name" = "_internal" ]; then
-        # onedir runtime: replace it entirely so stale modules cannot linger
-        rm -rf "$APP_DIR/_internal"
-        cp -rf "$STAGE/_internal" "$APP_DIR/_internal" || ok=0
+    if [ "$name" = "assets" ] || [ "$name" = "_internal" ]; then
+        # Skip the big, rarely changing trees when their build id is identical:
+        # copying 38 MB of runtime or 11 MB of assets over FAT is slow.
+        stamp="$name/.assets-id"
+        [ "$name" = "_internal" ] && stamp="_internal/.runtime-id"
+        new_id=$(cat "$STAGE/$stamp" 2>/dev/null)
+        old_id=$(cat "$APP_DIR/$stamp" 2>/dev/null)
+        if [ -n "$new_id" ] && [ "$new_id" = "$old_id" ]; then
+            echo "$name unchanged (id $new_id), skipping"
+        elif [ "$name" = "_internal" ]; then
+            rm -rf "$APP_DIR/_internal"
+            cp -rf "$STAGE/_internal" "$APP_DIR/_internal" || ok=0
+        else
+            cp -rf "$STAGE/assets/." "$APP_DIR/assets/" || ok=0
+        fi
     else
         cp -rf "$item" "$APP_DIR/" || ok=0
     fi
