@@ -2,14 +2,44 @@ import os
 import sys
 import json
 
+
+def _load_screen_profile():
+    """Read the optional per-device UI profile from assets/settings.json.
+
+    The whole UI is laid out against a reference resolution. On a device whose
+    native resolution has a different aspect ratio than that reference (for
+    example the TrimUI Brick / Brick Pro panel is 1024x768 4:3 while the
+    reference is 1280x720 16:9), the uniform ``min(SCALE_X, SCALE_Y)`` factor
+    shrinks every element and leaves vertical space unused. A device profile can
+    declare its own reference resolution so the layout is *designed* for that
+    panel instead of being squeezed into it:
+
+        "screen": {"base_width": 1024, "base_height": 768, "base_font_size": 24}
+    """
+    profile = {"base_width": 1280, "base_height": 720, "base_font_size": 24}
+    try:
+        app_dir = os.path.abspath(os.path.dirname(sys.argv[0]))
+        with open(os.path.join(app_dir, "assets", "settings.json"), "r", encoding="utf-8") as handle:
+            screen = (json.loads(handle.read()) or {}).get("screen") or {}
+        for key in profile:
+            if screen.get(key):
+                profile[key] = int(screen[key])
+    except Exception:
+        pass
+    return profile
+
+
+_SCREEN_PROFILE = _load_screen_profile()
+
+
 class Config:
     """Application configuration settings"""
     # Application metadata
     APP_NAME = "EmuDrop" 
     
-    # Base screen settings (reference resolution)
-    BASE_SCREEN_WIDTH = 1280
-    BASE_SCREEN_HEIGHT = 720
+    # Base screen settings (reference resolution, per-device override supported)
+    BASE_SCREEN_WIDTH = _SCREEN_PROFILE["base_width"]
+    BASE_SCREEN_HEIGHT = _SCREEN_PROFILE["base_height"]
     
     # Current screen settings
     SCREEN_WIDTH = 1280
@@ -56,7 +86,7 @@ class Config:
         SCRAPER_API_SSPASS = scrapper['SCRAPER_API_SSPASS']
     
     # Font settings
-    BASE_FONT_SIZE = 24
+    BASE_FONT_SIZE = _SCREEN_PROFILE["base_font_size"]
     FONT_SIZE = int(BASE_FONT_SIZE * SCALE_FACTOR)
     FONT_NAME = "arial.ttf"
 
