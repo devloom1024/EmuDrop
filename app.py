@@ -135,6 +135,7 @@ class GameDownloaderApp:
             # Update handling (in-app, user confirmed)
             self.update_check_started: bool = False
             self.update_busy: bool = False
+            self.update_progress: Dict[str, Any] = {"fraction": 0.0, "text": ""}
             self.pending_updates: Dict[str, Optional[Dict[str, Any]]] = {"app": None, "db": None}
             self.shutdown_for_update: bool = False
 
@@ -617,6 +618,10 @@ class GameDownloaderApp:
             bool: False if application should exit, True otherwise.
         """
         
+        # While an update is downloading/installing, the progress screen is modal
+        if self.update_busy:
+            return True
+
         # Handle alert dismissal first
         if self.alert_manager.is_showing():
             if key in [sdl2.SDLK_RETURN, sdl2.SDLK_BACKSPACE, Config.CONTROLLER_BUTTON_A, Config.CONTROLLER_BUTTON_B]:
@@ -1171,6 +1176,14 @@ class GameDownloaderApp:
     def _render(self) -> None:
         """Render the current application state."""
         try:
+            if self.update_busy:
+                self.loading_screen.render(
+                    self.update_progress.get("fraction", 0.0),
+                    self.update_progress.get("text", "Updating..."),
+                )
+                self._present_frame()
+                return
+
             self._clear_screen()
             self._render_main_view()
             self._render_overlays()
@@ -1733,24 +1746,25 @@ class GameDownloaderApp:
                 f"Still running {installed}",
             )
 
+    def _set_update_progress(self, fraction: float, text: str) -> None:
+        """Update the modal progress screen (thread-safe enough: simple values)."""
+        self.update_progress = {"fraction": max(0.0, min(1.0, fraction)), "text": text}
+        self.needs_redraw = True
+
     def _start_app_update(self, info) -> None:
         self.update_busy = True
-        self.alert_manager.show_info("Updating EmuDrop", "Starting download...")
+        self._set_update_progress(0.0, "Downloading update...")
 
         def progress(done, total):
             if total:
-                self.alert_manager.show_info("Updating EmuDrop", f"Downloading {int(done * 100 / total)}%")
+                self._set_update_progress(done / total, f"Downloading update... {int(done * 100 / total)}%")
 
         def worker():
             try:
                 script = updater.prepare_app_update(info, progress_cb=progress)
                 updater.write_update_target(info.get("version", ""))
-                self.alert_manager.show_info(
-                    "Updating EmuDrop",
-                    "Installing, EmuDrop will restart in a moment...",
-                )
-                self.needs_redraw = True
-                time.sleep(1.2)  # let the user read the message before we exit
+                self._set_update_progress(1.0, "Installing update - EmuDrop will restart...")
+                time.sleep(1.5)  # let the user read the message before we exit
                 updater.launch_update_script(script)
                 self.shutdown_for_update = True
             except Exception as exc:
@@ -1762,16 +1776,16 @@ class GameDownloaderApp:
 
     def _start_db_update(self, info) -> None:
         self.update_busy = True
-        self.alert_manager.show_info("Updating catalog", "Starting download...")
+        self._set_update_progress(0.0, "Downloading game catalog...")
 
         def progress(done, total):
             if total:
-                self.alert_manager.show_info("Updating catalog", f"Downloading {int(done * 100 / total)}%")
+                self._set_update_progress(done / total, f"Downloading game catalog... {int(done * 100 / total)}%")
 
         def worker():
             try:
                 updater.apply_db_update(info, progress_cb=progress)
-                self.alert_manager.show_info("Updating catalog", "Installing...")
+                self._set_update_progress(1.0, "Installing game catalog...")
                 try:
                     self.database.close()
                 except Exception:
