@@ -8,6 +8,7 @@ from typing import NoReturn
 from app import GameDownloaderApp
 from utils.logger import logger
 from utils import net
+from utils import updater
 import os
 import sys
 
@@ -27,6 +28,9 @@ def main() -> NoReturn:
 
         # Load proxy settings (assets/proxy.conf) before any network activity
         net.configure()
+
+        # Finish a catalog update that was interrupted before it could be swapped in
+        updater.swap_staged_database()
 
         # QA hook: verify the configured path without touching the UI
         if os.environ.get("EMUDROP_DEBUG_TEST") == "1":

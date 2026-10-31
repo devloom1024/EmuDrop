@@ -24,6 +24,7 @@ import sdl2.sdlimage
 from utils.config import Config
 from utils.logger import logger
 from utils import net
+from utils import updater
 from utils.texture_manager import TextureManager
 from utils.download_manager import DownloadManager
 from utils.theme import Theme
@@ -53,6 +54,7 @@ class ViewState:
     confirmation_selected: bool = False
     confirmation_type: Optional[str] = None
     network_edit_field: Optional[str] = None
+    update_info: Optional[Dict[str, Any]] = None
 
 @dataclass
 class NavigationState:
@@ -128,6 +130,12 @@ class GameDownloaderApp:
             self.cached_platforms = None
             self.cached_games = {}  # Dictionary to cache games by platform_id and source_id
             self.cached_sources = {}
+
+            # Update handling (in-app, user confirmed)
+            self.update_check_started: bool = False
+            self.update_busy: bool = False
+            self.pending_updates: Dict[str, Optional[Dict[str, Any]]] = {"app": None, "db": None}
+            self.shutdown_for_update: bool = False
 
             # Network / proxy settings screen state
             self.network_conf: Dict[str, str] = {}
@@ -338,6 +346,9 @@ class GameDownloaderApp:
             
             # Show loading screen
             self._simulate_loading()
+
+            # Look for updates in the background (never blocks startup)
+            self._start_update_check()
             
             while running:
                 try:
@@ -357,6 +368,11 @@ class GameDownloaderApp:
                     
                     # Update downloads
                     self._update_downloads()
+
+                    # Surface a pending update as a user prompt
+                    self._maybe_prompt_update()
+                    if self.shutdown_for_update:
+                        running = False
                     
                     # Render only when state has changed
                     if self.needs_redraw:
@@ -1041,6 +1057,18 @@ class GameDownloaderApp:
 
     def _handle_confirmation_ok(self):
         """Handle OK button press in confirmation dialog"""
+        if self.view_state.confirmation_type in ('app_update', 'db_update'):
+            kind = self.view_state.confirmation_type
+            info = self.view_state.update_info
+            accepted = self.view_state.confirmation_selected
+            self._reset_confirmation_state()
+            if accepted and info:
+                if kind == 'app_update':
+                    self._start_app_update(info)
+                else:
+                    self._start_db_update(info)
+            return
+
         if not self.view_state.confirmation_selected:
             self._reset_confirmation_state()
             return
@@ -1296,10 +1324,11 @@ class GameDownloaderApp:
         """Render the confirmation dialog with appropriate message and info."""
         message, additional_info = self._get_confirmation_content()
         
+        button_texts = ("Update", "Cancel") if self.view_state.confirmation_type in ('app_update', 'db_update') else ("Yes", "No")
         self.confirmation_dialog.render(
             message=message,
             confirmation_selected=self.view_state.confirmation_selected,
-            button_texts=("Yes", "No"),
+            button_texts=button_texts,
             additional_info=additional_info
         )
 
@@ -1315,6 +1344,29 @@ class GameDownloaderApp:
         if self.view_state.confirmation_type == 'cancel':
             return "Do you want to cancel downloading?", [(self.game_to_download.get('name', ''), Theme.TEXT_SECONDARY),]
             
+        if self.view_state.confirmation_type in ('app_update', 'db_update') and self.view_state.update_info:
+            info = self.view_state.update_info
+            if self.view_state.confirmation_type == 'app_update':
+                size = DownloadManager.format_size(info.get('size', 0)) if info.get('size') else 'unknown'
+                return (
+                    "EmuDrop update available",
+                    [
+                        (f"New version: {info.get('version', '?')}", Theme.SUCCESS),
+                        (f"Installed: {info.get('current', '?')}", Theme.TEXT_SECONDARY),
+                        (f"Download size: {size}", Theme.TEXT_SECONDARY),
+                        ("A: update now    B: cancel (ask again next launch)", Theme.TEXT_PLACEHOLDER),
+                    ],
+                )
+            return (
+                "Game catalog update available",
+                [
+                    (f"New catalog: {info.get('version', '?')}", Theme.SUCCESS),
+                    (f"Installed: {info.get('current', '?')}", Theme.TEXT_SECONDARY),
+                    ("About 24 MB, applied immediately", Theme.TEXT_SECONDARY),
+                    ("A: update now    B: cancel (ask again next launch)", Theme.TEXT_PLACEHOLDER),
+                ],
+            )
+
         if self.view_state.confirmation_type == 'download' and self.game_to_download:
             game_size = self.game_to_download.get('size', 0)
             total_space, free_space = DownloadManager.get_disk_space()
@@ -1598,6 +1650,102 @@ class GameDownloaderApp:
                 display_text,
                 prompt=f"Edit {field}",
             )
+
+    # ------------------------------------------------------------------
+    # In-app updates (user prompted, never automatic)
+    # ------------------------------------------------------------------
+
+    def _start_update_check(self) -> None:
+        """Query GitHub for a newer app/catalog release in the background."""
+        if self.update_check_started:
+            return
+        self.update_check_started = True
+
+        def worker():
+            try:
+                self.pending_updates["app"] = updater.check_app_update()
+                self.pending_updates["db"] = updater.check_db_update()
+            except Exception as exc:
+                logger.warning(f"Update check failed: {exc}")
+            self.needs_redraw = True
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _maybe_prompt_update(self) -> None:
+        """Show the update dialog once the user is idle on a normal screen."""
+        if (self.view_state.showing_confirmation or self.view_state.showing_keyboard
+                or self.alert_manager.is_showing() or self.update_busy):
+            return
+        if self.view_state.mode not in ("platforms", "games", "sources"):
+            return
+        if self.downloads:
+            return
+        for kind in ("app", "db"):
+            info = self.pending_updates.get(kind)
+            if not info:
+                continue
+            # Ask only once per launch: cancelling means "ask again next time"
+            self.pending_updates[kind] = None
+            self.view_state.update_info = info
+            self._show_confirmation(f"{kind}_update")
+            return
+
+    def _start_app_update(self, info) -> None:
+        self.update_busy = True
+        self.alert_manager.show_info("Updating EmuDrop", "Starting download...")
+
+        def progress(done, total):
+            if total:
+                self.alert_manager.show_info("Updating EmuDrop", f"Downloading {int(done * 100 / total)}%")
+
+        def worker():
+            try:
+                script = updater.prepare_app_update(info, progress_cb=progress)
+                self.alert_manager.show_info("Updating EmuDrop", "Installing, EmuDrop will restart...")
+                updater.launch_update_script(script)
+                self.shutdown_for_update = True
+            except Exception as exc:
+                logger.error(f"App update failed: {exc}", exc_info=True)
+                self.update_busy = False
+                self.alert_manager.show_error("Update failed", str(exc)[:140])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _start_db_update(self, info) -> None:
+        self.update_busy = True
+        self.alert_manager.show_info("Updating catalog", "Starting download...")
+
+        def progress(done, total):
+            if total:
+                self.alert_manager.show_info("Updating catalog", f"Downloading {int(done * 100 / total)}%")
+
+        def worker():
+            try:
+                updater.apply_db_update(info, progress_cb=progress)
+                self.alert_manager.show_info("Updating catalog", "Installing...")
+                try:
+                    self.database.close()
+                except Exception:
+                    pass
+                installed = updater.swap_staged_database()
+                self.database = Database()
+                self.cached_platforms = None
+                self.cached_games.clear()
+                self.cached_sources.clear()
+                if installed:
+                    app_version, _ = updater.read_versions()
+                    updater.write_versions(app_version, info.get("version", ""))
+                    logger.info(f"Catalog updated to {info.get('version')}")
+                    self.alert_manager.show_success("Catalog updated", info.get("version", ""))
+                else:
+                    self.alert_manager.show_error("Catalog update failed")
+            except Exception as exc:
+                logger.error(f"Catalog update failed: {exc}", exc_info=True)
+                self.alert_manager.show_error("Catalog update failed", str(exc)[:140])
+            finally:
+                self.update_busy = False
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def cleanup(self) -> None:
         """Clean up resources before application exit."""

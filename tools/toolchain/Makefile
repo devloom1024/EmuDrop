@@ -17,6 +17,13 @@ endif
 # Repo root relative to this Makefile (tools/toolchain/)
 REPO_ROOT := $(abspath $(CURDIR)/../..)
 
+# Release version stamped into version.txt of the package. Override on the
+# command line (make release VERSION=v3.0.1-hk.1) or bump the VERSION file.
+VERSION ?= $(shell cat "$(REPO_ROOT)/VERSION" 2>/dev/null | tr -d '[:space:]')
+VERSION := $(if $(VERSION),$(VERSION),v0.0.0)
+# Catalog database version currently shipped/latest upstream.
+DB_VERSION ?= v2.0.0
+
 .build: .check Dockerfile
 	@$(TOOL) run --rm --privileged multiarch/qemu-user-static --reset -p yes > /dev/null 2>&1 || true
 	@if [ -z "$$($(TOOL) images -q $(TOOLCHAIN_NAME))" ]; then \
@@ -58,6 +65,7 @@ release: .check .build
 			mv dist/EmuDrop dist/.release/EmuDrop/EmuDrop && \
 			cp -r assets/* dist/.release/EmuDrop/assets/ && \
 			cp 'device/$(DEVICE)/'* dist/.release/EmuDrop/assets/ && \
+			printf '%s\\n%s\\n' '$(VERSION)' '$(DB_VERSION)' > dist/.release/EmuDrop/version.txt && \
 			rm -rf dist/EmuDrop && \
 			mv dist/.release/* dist/ && \
 			rmdir dist/.release"
