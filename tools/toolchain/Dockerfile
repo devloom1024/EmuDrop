@@ -1,17 +1,22 @@
-# Uses monkeyx/retro_builder:arm64 as base image
-#FROM monkeyx/retro_builder:arm64
-FROM python:3.13.5-slim
+# Build image for the ARM64 (aarch64) handheld targets.
+#
+# IMPORTANT: keep the glibc of this image at or below the oldest target device.
+# The TrimUI family (Stock / CrossMix firmware) ships glibc 2.33, so a Debian
+# bookworm based image (glibc 2.36) produces binaries that fail with
+# "GLIBC_2.35 not found". Debian bullseye (glibc 2.31) is the safe choice.
+#
+# QEMU is not required: the build host is arm64 as well, so the arm64 image runs
+# natively.
+FROM python:3.11-slim-bullseye
 
-# Remove problematic kitware repo and install QEMU + pip
-RUN rm -f /etc/apt/sources.list.d/kitware* && \
-    apt-get update && apt-get install -y \
-    binutils \
-    qemu-user-static \
-    && rm -rf /var/lib/apt/lists/*
+# binutils provides objdump, required by PyInstaller on Linux.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends binutils && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 VOLUME /root/workspace
 WORKDIR /root/workspace
