@@ -43,24 +43,15 @@ rm -f "$APP_DIR/EmuDrop.new"
 rm -rf "$APP_DIR/.update_staging" "$APP_DIR/.update_backup"
 
 # Single instance guard: two copies would fight over the framebuffer and over
-# the PyInstaller extraction directory in /tmp.
+# the PyInstaller extraction directory in /tmp. Exit immediately (do not block
+# the launcher) when the app is already running.
 RUNTIME_LOCK="$APP_DIR/.running"
-i=0
-while [ $i -lt 30 ]; do
-    if mkdir "$RUNTIME_LOCK" 2>/dev/null; then
-        break
-    fi
-    if ! pidof EmuDrop > /dev/null 2>&1; then
-        rm -rf "$RUNTIME_LOCK"
-        continue
-    fi
-    sleep 1
-    i=$((i + 1))
-done
-if [ ! -d "$RUNTIME_LOCK" ]; then
-    echo "Another instance is already running"
+if pidof EmuDrop > /dev/null 2>&1; then
+    echo "EmuDrop is already running"
     exit 0
 fi
+rm -rf "$RUNTIME_LOCK"
+mkdir "$RUNTIME_LOCK" 2>/dev/null
 
 
 export PYSDL2_DLL_PATH="/usr/trimui/lib/"

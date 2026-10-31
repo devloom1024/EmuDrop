@@ -139,6 +139,10 @@ class GameDownloaderApp:
             self.update_progress: Dict[str, Any] = {"fraction": 0.0, "text": ""}
 
             # QA hook: drive the UI over SSH through a FIFO (debug builds only)
+            self._alert_visible: bool = False
+            self._confirm_visible: bool = False
+            self._last_ui_tick: int = 0
+
             self._debug_commands: "queue.Queue" = queue.Queue()
             self._start_debug_control()
             self.pending_updates: Dict[str, Optional[Dict[str, Any]]] = {"app": None, "db": None}
@@ -389,14 +393,22 @@ class GameDownloaderApp:
                     if self.shutdown_for_update:
                         running = False
                     
-                    # Dialogs, key overlays and progress screens must stay live
-                    # even when nobody touches the controls (e.g. an update
-                    # prompt that appears while the user is idle).
-                    if (self.alert_manager.is_showing()
-                            or self.view_state.showing_confirmation
-                            or self.view_state.showing_keyboard
-                            or self.update_busy):
+                    # Dialogs opened by a background thread must appear
+                    # immediately, but they do not need a full 30 fps repaint:
+                    # only animated overlays (keyboard cursor, update progress)
+                    # need continuous frames.
+                    alerting = self.alert_manager.is_showing()
+                    confirming = self.view_state.showing_confirmation
+                    if alerting != self._alert_visible or confirming != self._confirm_visible:
                         self.needs_redraw = True
+                    self._alert_visible = alerting
+                    self._confirm_visible = confirming
+
+                    if self.view_state.showing_keyboard or self.update_busy:
+                        self.needs_redraw = True
+                    elif (alerting or confirming) and (current_time - self._last_ui_tick) > 200:
+                        self.needs_redraw = True
+                        self._last_ui_tick = current_time
 
                     # Render only when state has changed
                     if self.needs_redraw:
