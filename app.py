@@ -1184,6 +1184,8 @@ class GameDownloaderApp:
         if not prefix:
             return
         mode = self.view_state.mode
+        if self.view_state.showing_confirmation:
+            mode = f"{mode}_confirm_{self.view_state.confirmation_type}"
         written = getattr(self, "_debug_shots_written", None)
         if written is None:
             written = set()
@@ -1324,12 +1326,17 @@ class GameDownloaderApp:
         """Render the confirmation dialog with appropriate message and info."""
         message, additional_info = self._get_confirmation_content()
         
-        button_texts = ("Update", "Cancel") if self.view_state.confirmation_type in ('app_update', 'db_update') else ("Yes", "No")
+        is_update = self.view_state.confirmation_type in ('app_update', 'db_update')
+        button_texts = ("Update", "Cancel") if is_update else ("Yes", "No")
+        # Update dialogs carry a changelog, so they need room for the extra lines
+        extra_lines = max(0, len(additional_info or []) - 3)
+        dialog_height = int(320 * Config.SCALE_FACTOR) + extra_lines * int(48 * Config.SCALE_FACTOR) if is_update else None
         self.confirmation_dialog.render(
             message=message,
             confirmation_selected=self.view_state.confirmation_selected,
             button_texts=button_texts,
-            additional_info=additional_info
+            additional_info=additional_info,
+            dialog_height=dialog_height
         )
 
     def _get_confirmation_content(self) -> Tuple[str, List[Tuple[str, Tuple[int, int, int, int]]]]:
@@ -1348,15 +1355,17 @@ class GameDownloaderApp:
             info = self.view_state.update_info
             if self.view_state.confirmation_type == 'app_update':
                 size = DownloadManager.format_size(info.get('size', 0)) if info.get('size') else 'unknown'
-                return (
-                    "EmuDrop update available",
-                    [
-                        (f"New version: {info.get('version', '?')}", Theme.SUCCESS),
-                        (f"Installed: {info.get('current', '?')}", Theme.TEXT_SECONDARY),
-                        (f"Download size: {size}", Theme.TEXT_SECONDARY),
-                        ("A: update now    B: cancel (ask again next launch)", Theme.TEXT_PLACEHOLDER),
-                    ],
-                )
+                lines = [
+                    (f"New version: {info.get('version', '?')}", Theme.SUCCESS),
+                    (f"Installed: {info.get('current', '?')}    Size: {size}", Theme.TEXT_SECONDARY),
+                    ("What's new:", Theme.TEXT_ACCENT),
+                ]
+                notes = [line.strip() for line in (info.get('notes') or '').splitlines() if line.strip()]
+                if notes:
+                    lines.extend((line[:64], Theme.TEXT_SECONDARY) for line in notes[:5])
+                else:
+                    lines.append(("No changelog provided", Theme.TEXT_PLACEHOLDER))
+                return ("EmuDrop update available", lines)
             return (
                 "Game catalog update available",
                 [

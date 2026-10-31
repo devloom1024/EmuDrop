@@ -68,7 +68,8 @@ class ConfirmationDialog(BaseView):
                confirmation_selected: bool,
                button_texts: Tuple[str, str] = ("Yes", "No"),
                button_colors: Optional[Tuple[Tuple[int, int, int, int], Tuple[int, int, int, int]]] = None,
-               additional_info: Optional[List[Tuple[str, Tuple[int, int, int, int]]]] = None) -> None:
+               additional_info: Optional[List[Tuple[str, Tuple[int, int, int, int]]]] = None,
+               dialog_height: Optional[int] = None) -> None:
         """Render the confirmation dialog
         
         Args:
@@ -85,9 +86,11 @@ class ConfirmationDialog(BaseView):
             sdl2.SDL_SetRenderDrawBlendMode(self.renderer, sdl2.SDL_BLENDMODE_BLEND)
             sdl2.SDL_RenderFillRect(self.renderer, overlay)
             
-            # Dialog box dimensions
+            # Dialog box dimensions (taller variants are used for dialogs with
+            # several lines of text such as the update prompt)
+            dialog_height = dialog_height or Config.DIALOG_HEIGHT
             dialog_x = (Config.SCREEN_WIDTH - Config.DIALOG_WIDTH) // 2
-            dialog_y = (Config.SCREEN_HEIGHT - Config.DIALOG_HEIGHT) // 2
+            dialog_y = (Config.SCREEN_HEIGHT - dialog_height) // 2
             
             # Draw dialog shadow with scaled offset
             shadow_offset = int(4 * Config.SCALE_FACTOR)
@@ -95,13 +98,13 @@ class ConfirmationDialog(BaseView):
                 dialog_x + shadow_offset,
                 dialog_y + shadow_offset,
                 Config.DIALOG_WIDTH,
-                Config.DIALOG_HEIGHT
+                dialog_height
             )
             sdl2.SDL_SetRenderDrawColor(self.renderer, *Theme.DIALOG_SHADOW)
             sdl2.SDL_RenderFillRect(self.renderer, shadow_rect)
             
             # Draw dialog background with gradient
-            dialog_rect = sdl2.SDL_Rect(dialog_x, dialog_y, Config.DIALOG_WIDTH, Config.DIALOG_HEIGHT)
+            dialog_rect = sdl2.SDL_Rect(dialog_x, dialog_y, Config.DIALOG_WIDTH, dialog_height)
             sdl2.SDL_SetRenderDrawColor(self.renderer, *Theme.DIALOG_BG, 255)
             sdl2.SDL_RenderFillRect(self.renderer, dialog_rect)
             
@@ -226,7 +229,8 @@ class ConfirmationDialog(BaseView):
                 )
             
             # Calculate button positions relative to dialog center with scaled dimensions
-            button_y = dialog_y + Config.DIALOG_BUTTON_Y
+            button_y = dialog_y + (Config.DIALOG_BUTTON_Y if dialog_height == Config.DIALOG_HEIGHT
+                                   else dialog_height - int(70 * Config.SCALE_FACTOR))
             button_spacing = int(40 * Config.SCALE_FACTOR)  # Scale space between buttons
             button_height = int(40 * Config.SCALE_FACTOR)  # Scale button height
             button_y_offset = int(10 * Config.SCALE_FACTOR)  # Scale vertical offset

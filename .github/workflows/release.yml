@@ -54,10 +54,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # --generate-notes produces the changelog that the in-app updater
+          # shows to the user before they accept an update.
           gh release create "${GITHUB_REF_NAME}" "dist/${ASSET}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "EmuDrop ${GITHUB_REF_NAME}" \
-            --notes "EmuDrop ${GITHUB_REF_NAME} — TrimUI Brick Pro / StockOS build (glibc 2.31)."
+            --generate-notes
 
       - uses: actions/upload-artifact@v4
         with:
