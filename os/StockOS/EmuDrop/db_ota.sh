@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # Repository name in the format "owner/repo"
 REPO="ahmadteeb/EmuDrop"
@@ -14,7 +14,7 @@ DB_FILE_NAME="catalog.db"
 
 # Function to get the local version
 get_local_version() {
-    if [[ -f "$VERSION_FILE" && -f "assets/$DB_FILE_NAME" ]]; then
+    if [ -f "$VERSION_FILE" ] && [ -f "assets/$DB_FILE_NAME" ]; then
         sed -n '2p' "$VERSION_FILE" | tr -d '[:space:]'
     else
         echo "v0.0.0" # Default version if the file does not exist
@@ -25,9 +25,10 @@ get_local_version() {
 get_latest_version() {
     local latest_version=$(curl -s -k "$API_URL" | grep -o '"name": "[^"]*' | grep '\-db' | head -n 1 | cut -d '"' -f 4)
     # If the version does not start with 'v', add the 'v'
-    if [[ ! $latest_version =~ ^v ]]; then
-        latest_version="v$latest_version"
-    fi
+    case "$latest_version" in
+        v*) ;;
+        *) latest_version="v$latest_version" ;;
+    esac
     echo "${latest_version%-db}"
 }
 
@@ -76,7 +77,7 @@ latest_version=$(get_latest_version)
 echo "Local version: $local_version"
 echo "Latest version: $latest_version"
 
-if [[ "$local_version" == "$latest_version" ]]; then
+if [ "$local_version" = "$latest_version" ]; then
     echo "You are already on the latest version: $latest_version"
 else
     echo "New update available: $latest_version"

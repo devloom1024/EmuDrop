@@ -2,5 +2,6 @@
     "label": "EmuDrop",
     "icon": "icon.png",
     "launch": "launch.sh",
-    "description": "EmuDrop is a ROMs downloader app"
+    "description": "EmuDrop is a ROMs downloader app",
+    "icontop": "icon.png"
 }
