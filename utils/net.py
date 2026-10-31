@@ -108,6 +108,10 @@ def configure(path=CONF_PATH, force=False):
     url = build_url(conf) if enabled else ""
 
     if not url:
+        # Make sure a previously enabled proxy cannot leak into this process
+        for key in ("http_proxy", "https_proxy", "all_proxy",
+                    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+            os.environ.pop(key, None)
         _state.update(loaded=True, enabled=False, url="", proxies={})
         if enabled:
             logger.warning("Proxy: ENABLED=1 but HOST/PORT missing, using direct connection")
@@ -145,11 +149,16 @@ def is_enabled():
 
 
 def get_session(verify=True):
-    """Return a ``requests`` session routed through the configured proxy."""
-    state = configure()
+    """Return a ``requests`` session routed through the configured proxy.
+
+    The proxy is taken from the environment (set by :func:`configure`) rather
+    than from ``Session.proxies`` on purpose: explicit session proxies take
+    precedence over ``NO_PROXY``, so a bypass list would stop working. With
+    environment proxies ``requests`` skips the hosts listed in ``NO_PROXY``
+    exactly like ``curl`` does.
+    """
+    configure()
     session = requests.Session()
-    if state["proxies"]:
-        session.proxies.update(state["proxies"])
     session.verify = verify
     return session
 
